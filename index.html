@@ -343,7 +343,7 @@ function initFirebaseSync(){
   ubuCloudRef.once('value').then(s=>{
    if(!s.exists()){
     db=ubuCleanSeed();
-    ubuCloudRef.set(db);
+     ubuCloudRef.set(stripHeavyDataForLocalStorage(db));
      saveUBUDBSafe();
     console.info('Firebase iniciado con base limpia.');
    }
@@ -351,15 +351,17 @@ function initFirebaseSync(){
   ubuCloudRef.on('value',s=>{
    let remote=s.val();
    if(!remote)return;
-   let fixed=ubuRepairDb(remote);
-   let changed=JSON.stringify(fixed)!==JSON.stringify(remote);
-   ubuCloudApplying=true;
-   db=fixed;
-    saveUBUDBSafe();
+    let fixed=ubuRepairDb(remote);
+    let cloudSafe=stripHeavyDataForLocalStorage(fixed);
+    let changed=JSON.stringify(cloudSafe)!==JSON.stringify(remote);
+    ubuCloudApplying=true;
+    db=fixed;
+    if(typeof migrateHeavyDataToIndexedDB==='function')migrateHeavyDataToIndexedDB(db).then(function(){saveUBUDBSafe()}).catch(function(){});
+     saveUBUDBSafe();
    window.__ubuCieFinalCache=null;
    ubuCloudReady=true;
    ubuCloudApplying=false;
-   if(changed&&ubuCloudRef)ubuCloudRef.set(db).catch(e=>console.warn('Error reparando Firebase',e));
+    if(changed&&ubuCloudRef)ubuCloudRef.set(cloudSafe).catch(e=>console.warn('Error reparando Firebase',e));
    if(session){
     try{renderNav();let active=document.querySelector('#nav button.active');if(active&&window['page_'+active.dataset.page])window['page_'+active.dataset.page]();}catch(e){console.warn(e)}
    }
@@ -367,7 +369,34 @@ function initFirebaseSync(){
  }catch(e){console.warn('No se pudo conectar con Firebase',e)}
 }
 function safeSetLocalStorage(key,value){
- try{localStorage.setItem(key,value);return true}catch(error){console.warn('No se pudo guardar en almacenamiento local',error);try{if(typeof notifyApp==='function')notifyApp('ALMACENAMIENTO LOCAL LLENO','El sistema continuará funcionando. Algunas imágenes pesadas no se guardarán localmente para evitar bloqueo por cuota.')}catch(_e){}return false}
+ try{localStorage.setItem(key,value);return true}catch(error){if(!isQuotaExceededError(error)){console.warn('No se pudo guardar en almacenamiento local',error);return false}try{var oldDb=localStorage.getItem('ubu_db_v2');if(oldDb){var lightDb=stripHeavyDataForLocalStorage(JSON.parse(oldDb));localStorage.setItem('ubu_db_v2',JSON.stringify(lightDb))}var parsed=typeof value==='string'?JSON.parse(value):value,cleaned=stripHeavyDataForLocalStorage(parsed);localStorage.setItem(key,JSON.stringify(cleaned));return true}catch(secondError){console.warn('Se conservó una versión mínima del estado local.',secondError);try{if(key==='ubu_db_v2')localStorage.setItem(key,JSON.stringify({__ubuMinimalState:true,updatedAt:new Date().toISOString()}));return key==='ubu_db_v2'}catch(_e){return false}}}
+}
+function isQuotaExceededError(error){return!!(error&&(error.name==='QuotaExceededError'||error.name==='NS_ERROR_DOM_QUOTA_REACHED'||error.code===22||error.code===1014))}
+function stripHeavyDataForLocalStorage(value){
+ var seen=[];
+ function clean(item,key,parent){
+  if(typeof item==='string'){
+   var heavy=/^(data:image\/|data:application\/pdf|data:application\/vnd|blob:)/i.test(item)||item.length>200000;
+   if(heavy)return '';
+   return item;
+  }
+  if(item==null||typeof item!=='object')return item;
+  if(seen.indexOf(item)>=0)return null;seen.push(item);
+  if(Array.isArray(item))return item.map(function(child){return clean(child,key,item)});
+  var out={};
+  Object.keys(item).forEach(function(childKey){
+   if(/^(htmlCompleto|previewHtml|reportHtml|wordHtml|pdfData|wordData|canvas|documentoGenerado)$/i.test(childKey))return;
+   var child=item[childKey];
+   if(typeof child==='string'&&/^(data:image\/|data:application\/pdf|data:application\/vnd|blob:)/i.test(child)){
+    if(!out.indexedDbKey)out.indexedDbKey=item.indexedDbKey||item.id||('img_'+Date.now()+'_'+Math.random().toString(36).slice(2));
+    if(childKey==='dataUrl')out.dataUrl='';
+    return;
+   }
+   out[childKey]=clean(child,childKey,item);
+  });
+  return out;
+ }
+ return clean(value,'',null);
 }
 function stripHeavyReportDataBeforeLocalStorageSave(value){
  var seen=[];
@@ -390,7 +419,7 @@ function stripHeavyReportDataBeforeLocalStorageSave(value){
   });
   return out;
  }
- return clone(value,'db');
+ return stripHeavyDataForLocalStorage(clone(value,'db'));
 }
 function saveUBUDBSafe(){
  var light=stripHeavyReportDataBeforeLocalStorageSave(db);
@@ -398,12 +427,12 @@ function saveUBUDBSafe(){
  try{localStorage.removeItem('ubuDb')}catch(_e){}
  return ok;
 }
-function saveMedicineReportImagesToIndexedDB(){return Promise.resolve(false)}
-function loadMedicineReportImagesFromIndexedDB(){return Promise.resolve(false)}
+function saveMedicineReportImagesToIndexedDB(){return typeof migrateHeavyDataToIndexedDB==='function'?migrateHeavyDataToIndexedDB(db):Promise.resolve(false)}
+function loadMedicineReportImagesFromIndexedDB(){return typeof hydrateReportImagesFromIndexedDB==='function'?hydrateReportImagesFromIndexedDB(window.monthlyMedicineReportState||db):Promise.resolve(false)}
 function scheduleCloudSave(){
  if(!ubuCloudEnabled()||!ubuCloudRef||ubuCloudApplying)return;
  clearTimeout(ubuCloudTimer);
- ubuCloudTimer=setTimeout(()=>{ubuCloudRef.set(db).catch(e=>console.warn('Error guardando en Firebase',e));},450);
+ ubuCloudTimer=setTimeout(()=>{ubuCloudRef.set(stripHeavyDataForLocalStorage(db)).catch(e=>console.warn('Error guardando en Firebase',e));},450);
 }
 
 var session=null,currentCed=(db.pacientes&&db.pacientes[0]?db.pacientes[0].ced:''),currentQueueIndex=null;function save(){
@@ -3797,7 +3826,92 @@ document.addEventListener('DOMContentLoaded',function(){
   window.compressMedicineImageDataUrl=window.compressMedicineImageFile;
   window.readOrCompressMedicineImageFile=window.compressMedicineImageFile;
 
+  /* correction-35: heavy report images live in IndexedDB, never in localStorage/Firebase */
+  window.UBU_IMAGE_MEMORY_CACHE=window.UBU_IMAGE_MEMORY_CACHE||{};
+  var UBU_IMAGES_DB_NAME='UBU_REPORT_IMAGES_DB',UBU_IMAGES_STORE='images';
+
+  window.openUBUImagesDB=function(){
+    return new Promise(function(resolve,reject){
+      if(!window.indexedDB)return reject(new Error('IndexedDB no disponible'));
+      var request=indexedDB.open(UBU_IMAGES_DB_NAME,1);
+      request.onupgradeneeded=function(){var database=request.result;if(!database.objectStoreNames.contains(UBU_IMAGES_STORE))database.createObjectStore(UBU_IMAGES_STORE,{keyPath:'id'})};
+      request.onsuccess=function(){resolve(request.result)};
+      request.onerror=function(){reject(request.error||new Error('No se pudo abrir IndexedDB'))};
+    });
+  };
+  window.saveReportImageToIndexedDB=function(imageObject){
+    imageObject=imageObject||{};var id=imageObject.indexedDbKey||imageObject.id||('img_'+Date.now()+'_'+Math.random().toString(36).slice(2)),dataUrl=imageObject.dataUrl||UBU_IMAGE_MEMORY_CACHE[id]||'';
+    if(!dataUrl)return Promise.resolve(id);
+    UBU_IMAGE_MEMORY_CACHE[id]=dataUrl;
+    return openUBUImagesDB().then(function(database){return new Promise(function(resolve,reject){var transaction=database.transaction(UBU_IMAGES_STORE,'readwrite');transaction.objectStore(UBU_IMAGES_STORE).put({id:id,dataUrl:dataUrl,nombreArchivo:imageObject.nombreArchivo||imageObject.name||'',tipo:imageObject.tipo||imageObject.type||'',tamaño:Number(imageObject.tamaño||imageObject.size)||0,fechaCarga:imageObject.fechaCarga||new Date().toISOString()});transaction.oncomplete=function(){database.close();resolve(id)};transaction.onerror=function(){database.close();reject(transaction.error)}})}).catch(function(error){console.warn('La imagen se mantendrá solo durante esta sesión.',error);return id});
+  };
+  window.getReportImageFromIndexedDB=function(imageId){
+    if(!imageId)return Promise.resolve(null);if(UBU_IMAGE_MEMORY_CACHE[imageId])return Promise.resolve({id:imageId,dataUrl:UBU_IMAGE_MEMORY_CACHE[imageId]});
+    return openUBUImagesDB().then(function(database){return new Promise(function(resolve,reject){var request=database.transaction(UBU_IMAGES_STORE,'readonly').objectStore(UBU_IMAGES_STORE).get(imageId);request.onsuccess=function(){database.close();var result=request.result||null;if(result&&result.dataUrl)UBU_IMAGE_MEMORY_CACHE[imageId]=result.dataUrl;resolve(result)};request.onerror=function(){database.close();reject(request.error)}})}).catch(function(){return null});
+  };
+  window.deleteReportImageFromIndexedDB=function(imageId){
+    if(!imageId)return Promise.resolve(false);delete UBU_IMAGE_MEMORY_CACHE[imageId];return openUBUImagesDB().then(function(database){return new Promise(function(resolve){var transaction=database.transaction(UBU_IMAGES_STORE,'readwrite');transaction.objectStore(UBU_IMAGES_STORE).delete(imageId);transaction.oncomplete=function(){database.close();resolve(true)};transaction.onerror=function(){database.close();resolve(false)}})}).catch(function(){return false});
+  };
+  function setRuntimeImageData(target,dataUrl){
+    if(!target||!dataUrl)return target;var id=target.indexedDbKey||target.id;if(id)UBU_IMAGE_MEMORY_CACHE[id]=dataUrl;
+    try{Object.defineProperty(target,'dataUrl',{value:dataUrl,writable:true,configurable:true,enumerable:false})}catch(_e){target.dataUrl=''}return target;
+  }
+  function imageMetadata(image){
+    image=image||{};var id=image.indexedDbKey||image.id||('img_'+Date.now()+'_'+Math.random().toString(36).slice(2)),metadata={id:image.id||id,indexedDbKey:id,nombreArchivo:image.nombreArchivo||image.name||'imagen',name:image.name||image.nombreArchivo||'imagen',tipo:image.tipo||image.type||'image/jpeg',type:image.type||image.tipo||'image/jpeg',tamaño:Number(image.tamaño||image.size)||0,fechaCarga:image.fechaCarga||new Date().toISOString(),comprimida:image.comprimida!==false};setRuntimeImageData(metadata,image.dataUrl||UBU_IMAGE_MEMORY_CACHE[id]||'');return metadata;
+  }
+  function visitReportImages(value,visitor,seen){
+    if(!value||typeof value!=='object')return;seen=seen||[];if(seen.indexOf(value)>=0)return;seen.push(value);
+    if(value.indexedDbKey||value.id&&(/^(img_|PROC-FOTO|REF-FOTO|ANEXO5)/.test(String(value.id))))visitor(value);
+    Object.keys(value).forEach(function(key){visitReportImages(value[key],visitor,seen)});
+  }
+  window.hydrateReportImagesFromMemory=function(root){visitReportImages(root||window.monthlyMedicineReportState||{},function(image){var id=image.indexedDbKey||image.id,data=UBU_IMAGE_MEMORY_CACHE[id];if(data)setRuntimeImageData(image,data)});return root};
+  window.hydrateReportImagesFromIndexedDB=function(root){
+    root=root||window.monthlyMedicineReportState||{};var images=[];visitReportImages(root,function(image){if(images.indexOf(image)<0)images.push(image)});
+    return Promise.all(images.map(function(image){var id=image.indexedDbKey||image.id;if(!id||image.dataUrl)return Promise.resolve(image);return getReportImageFromIndexedDB(id).then(function(saved){if(saved&&saved.dataUrl)setRuntimeImageData(image,saved.dataUrl);return image})})).then(function(){return root});
+  };
+  window.loadReportImagesForCurrentReport=function(){return hydrateReportImagesFromIndexedDB(window.monthlyMedicineReportState||{})};
+  window.migrateHeavyDataToIndexedDB=function(root){
+    var jobs=[],seen=[];
+    function walk(value){if(!value||typeof value!=='object'||seen.indexOf(value)>=0)return;seen.push(value);Object.keys(value).forEach(function(key){var child=value[key];if(typeof child==='string'&&/^data:image\//i.test(child)){var id=value.indexedDbKey||value.id||('img_'+Date.now()+'_'+Math.random().toString(36).slice(2));value.indexedDbKey=id;jobs.push(saveReportImageToIndexedDB(Object.assign({},value,{id:id,dataUrl:child})));if(key==='dataUrl'){try{delete value[key]}catch(_e){value[key]=''}setRuntimeImageData(value,child)}else value[key]=''}else walk(child)})}walk(root);return Promise.all(jobs).then(function(){return jobs.length});
+  };
+  window.cleanupHeavyLocalStorageData=function(){
+    var raw='';try{raw=localStorage.getItem('ubu_db_v2')||''}catch(_e){return Promise.resolve(false)}if(!raw)return Promise.resolve(false);
+    var stored;try{stored=JSON.parse(raw)}catch(_e){try{localStorage.removeItem('ubu_db_v2')}catch(__e){}return Promise.resolve(false)}
+    return migrateHeavyDataToIndexedDB(stored).then(function(){return safeSetLocalStorage('ubu_db_v2',JSON.stringify(stripHeavyDataForLocalStorage(stored)))}).catch(function(){return safeSetLocalStorage('ubu_db_v2',JSON.stringify(stripHeavyDataForLocalStorage(stored)))});
+  };
+
+  var correction35Compress=window.compressMedicineImageFile;
+  window.compressMedicineImageFile=function(file,options){options=Object.assign({maxWidth:1600,maxHeight:1600,quality:.82,outputType:'image/jpeg'},options||{});options.quality=Math.max(.75,Number(options.quality)||.82);return correction35Compress(file,options).then(function(image){var metadata=imageMetadata(image);return saveReportImageToIndexedDB(Object.assign({},metadata,{dataUrl:image.dataUrl})).then(function(){return metadata})})};
+  window.compressMedicineImageDataUrl=window.compressMedicineImageFile;
+  window.readOrCompressMedicineImageFile=window.compressMedicineImageFile;
+
+  window.addMedicineAnexo5Images=function(images){var state=window.monthlyMedicineReportState,a5=state.paso7.anexo5,lastId='';(images||[]).forEach(function(image){var photo=imageMetadata(image);lastId=photo.id;photo.orden=a5.registrosFisicos.length+1;photo.descripcion='';a5.registrosFisicos.push(photo)});state.lastInsertedImageId=lastId;if(typeof normalizeMedicineAnexo5PhotoOrder==='function')normalizeMedicineAnexo5PhotoOrder(false);renderMedicineMonthlyReportWizard(7,{preservePreviewScroll:true,reason:'image-update',previewImageId:lastId})};
+  window.addMedicineAnexo6ProcedureImages=function(images){var state=window.monthlyMedicineReportState,photos=state.paso8.anexo6.registrosFisicosProcedimientos,lastId='';(images||[]).forEach(function(image){var photo=imageMetadata(image);lastId=photo.id;photo.orden=photos.length+1;photo.descripcion='';photos.push(photo)});state.lastInsertedImageId=lastId;renderMedicineMonthlyReportWizard(8,{preservePreviewScroll:true,reason:'image-update',previewImageId:lastId})};
+  window.addMedicineAnexo6ReferenceImage=function(referenceId,image){var state=window.monthlyMedicineReportState,photo=imageMetadata(image);state.paso8.anexo6.capturasReferencias[referenceId]=photo;state.lastInsertedImageId=photo.id;renderMedicineMonthlyReportWizard(8,{preservePreviewScroll:true,reason:'image-update',previewImageId:photo.id})};
+
+  var correction35RemoveA5=window.removeMedicineAnexo5Photo,correction35RemoveA6=window.removeMedicineAnexo6ProcedurePhoto,correction35RemoveRef=window.removeMedicineAnexo6ReferenceImage;
+  window.removeMedicineAnexo5Photo=function(index){var photo=window.monthlyMedicineReportState.paso7.anexo5.registrosFisicos[index];if(photo)deleteReportImageFromIndexedDB(photo.indexedDbKey||photo.id);return correction35RemoveA5(index)};
+  window.removeMedicineAnexo6ProcedurePhoto=function(index){var photo=window.monthlyMedicineReportState.paso8.anexo6.registrosFisicosProcedimientos[index];if(photo)deleteReportImageFromIndexedDB(photo.indexedDbKey||photo.id);return correction35RemoveA6(index)};
+  window.removeMedicineAnexo6ReferenceImage=function(referenceId){var photo=window.monthlyMedicineReportState.paso8.anexo6.capturasReferencias[referenceId];if(photo)deleteReportImageFromIndexedDB(photo.indexedDbKey||photo.id);return correction35RemoveRef(referenceId)};
+
+  function correction35ImageMarkup(image,alt,cssClass){var data=image&&(image.dataUrl||UBU_IMAGE_MEMORY_CACHE[image.indexedDbKey||image.id]);return data?'<img'+(cssClass?' class="'+cssClass+'"':'')+' src="'+correction34Escape(data)+'" alt="'+correction34Escape(alt||'Imagen del informe')+'">':'<div class="medicine-report-image-unavailable">Imagen no disponible en este navegador.</div>'}
+  window.renderMedicineAnexo5PhotoEvidence=function(photo){var caption=photo.descripcion||photo.nombreArchivo||('Registro '+photo.orden);return'<div class="medicine-anexo5-photo-frame" data-report-image-id="'+correction34Escape(photo.id||'')+'">'+correction35ImageMarkup(photo,caption,'')+'<p class="medicine-anexo5-photo-caption">'+correction34Escape(caption)+'</p></div>'};
+  window.renderMedicineAnexo6ProcedurePhotoEvidence=function(photo){var caption=photo.descripcion||photo.nombreArchivo||'Registro físico';return'<div class="medicine-anexo6-photo-frame" data-report-image-id="'+correction34Escape(photo.id||'')+'">'+correction35ImageMarkup(photo,caption,'')+'<p class="medicine-anexo6-photo-caption">'+correction34Escape(caption)+'</p></div>'};
+  window.renderMedicineAnexo6ReferencePages=function(references){var captures=window.monthlyMedicineReportState.paso8.anexo6.capturasReferencias;return(references||[]).map(function(reference,index){var capture=captures[reference.id],image=capture?correction35ImageMarkup(capture,'Formulario de referencia '+(index+1),''):'<div class="medicine-report-image-unavailable">Imagen no disponible en este navegador.</div>',table='<table class="medicine-anexo6-reference-table"><tr><th>N°</th><td>'+(index+1)+'</td><th>FECHA</th><td>'+correction34Escape(reference.fecha)+'</td></tr><tr><th>NOMBRES Y APELLIDOS</th><td colspan="3">'+correction34Escape(reference.nombresApellidos)+'</td></tr><tr><th>CARRERA</th><td>'+correction34Escape(reference.carrera)+'</td><th>CICLO</th><td>'+correction34Escape(reference.ciclo)+'</td></tr><tr><th>DIAGNÓSTICO</th><td colspan="3">'+correction34Escape(reference.diagnosticoTexto)+'</td></tr></table>';return'<section class="medicine-anexo6 medicine-anexo6-reference-page"><h3 class="medicine-anexo6-reference-title">Referencia / Derivación N° '+(index+1)+'</h3>'+table+'<div class="medicine-anexo6-reference-image-frame" data-report-image-id="'+correction34Escape(capture&&capture.id||'')+'">'+image+'</div></section>'})};
+
+  var correction35UpdatePreview=window.updateMedicineMonthlyReportPreview;
+  window.updateMedicineMonthlyReportPreview=function(options){hydrateReportImagesFromMemory(window.monthlyMedicineReportState||{});return correction35UpdatePreview(options)};
+  var correction35OpenWizard=window.openMedicineMonthlyReportWizard;
+  window.openMedicineMonthlyReportWizard=function(){var result=correction35OpenWizard.apply(this,arguments);hydrateReportImagesFromIndexedDB(window.monthlyMedicineReportState||{}).then(function(){hydrateReportImagesFromMemory(window.monthlyMedicineReportState||{});if(window.monthlyMedicineReportState&&typeof renderMedicineMonthlyReportWizard==='function')renderMedicineMonthlyReportWizard(window.monthlyMedicineReportState.stepActual||1,{preservePreviewScroll:true,reason:'image-hydration'})});return result};
+  var correction35DownloadPdf=window.downloadMedicineMonthlyReportPDF;
+  window.downloadMedicineMonthlyReportPDF=async function(){await hydrateReportImagesFromIndexedDB(window.monthlyMedicineReportState||{});hydrateReportImagesFromMemory(window.monthlyMedicineReportState||{});if(typeof updateMedicineMonthlyReportPreview==='function')updateMedicineMonthlyReportPreview({preserveScroll:true,autoScrollToStep:false,reason:'pdf-image-hydration'});return correction35DownloadPdf.apply(this,arguments)};
+  window.exportMedicineMonthlyReportPDF=window.downloadMedicineMonthlyReportPDF;
+
+  function runCorrection35StorageCleanup(){var jobs=[cleanupHeavyLocalStorageData()];if(typeof db!=='undefined'&&db)jobs.push(migrateHeavyDataToIndexedDB(db));if(window.monthlyMedicineReportState)jobs.push(migrateHeavyDataToIndexedDB(window.monthlyMedicineReportState));return Promise.all(jobs).then(function(){if(typeof saveUBUDBSafe==='function')saveUBUDBSafe();return true}).catch(function(error){console.warn('La limpieza de datos pesados continuará en segundo plano.',error);return false})}
+  runCorrection35StorageCleanup();
+
   if(document&&typeof document.addEventListener==='function')document.addEventListener('DOMContentLoaded',function(){
+    runCorrection35StorageCleanup();
     var loginButton=Array.prototype.slice.call(document.querySelectorAll('button')).find(function(button){return/ingresar\s+al\s+sistema/i.test(button.textContent||'')});
     if(loginButton)loginButton.onclick=window.doLogin;
   });
