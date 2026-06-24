@@ -2829,6 +2829,107 @@ document.addEventListener('DOMContentLoaded',function(){
   @media(max-width:1150px){.mmrw-layout{grid-template-columns:1fr}.mmrw-preview-scroll{height:680px}.mmrw-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
   @media(max-width:680px){.mmrw-card{padding:15px}.mmrw-title{font-size:21px}.mmrw-form-grid{grid-template-columns:1fr}.mmrw-field.full{grid-column:auto}.mmrw-preview-scroll{height:610px;padding:10px}.mmrw-actions-right{width:100%}.mmrw-actions-right .btn{flex:1}.mmrw-step-jump{gap:4px}.mmrw-step-jump button{width:31px;height:31px;min-width:31px}.mmrw-summary-grid{grid-template-columns:1fr}.mmrw-a4{font-size:8px}}
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+  .medicine-report-page,
+  .mmrw-a4,
+  .mmrw-a4-page {
+    width: 210mm !important;
+    min-width: 210mm !important;
+    height: 297mm !important;
+    min-height: 297mm !important;
+    max-height: 297mm !important;
+    padding: 25mm !important;
+    background: #fff !important;
+    color: #000 !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important;
+    position: relative !important;
+    font-family: "Century Gothic", Arial, sans-serif !important;
+  }
+  .medicine-report-content,
+  .medicine-page-content {
+    width: 100% !important;
+    height: 100% !important;
+    max-width: 100% !important;
+    max-height: 100% !important;
+    overflow: hidden !important;
+    box-sizing: border-box !important;
+  }
+  .medicine-report-page *,
+  .mmrw-a4 *,
+  .mmrw-a4-page * {
+    box-sizing: border-box !important;
+    max-width: 100% !important;
+    color: #000 !important;
+    text-transform: none !important;
+  }
+  .medicine-report-page p,
+  .medicine-report-page li,
+  .medicine-report-page td,
+  .medicine-report-page th,
+  .mmrw-a4 p,
+  .mmrw-a4 li,
+  .mmrw-a4 td,
+  .mmrw-a4 th,
+  .mmrw-a4-page p,
+  .mmrw-a4-page li,
+  .mmrw-a4-page td,
+  .mmrw-a4-page th {
+    overflow-wrap: anywhere !important;
+    word-break: normal !important;
+    white-space: normal !important;
+  }
+  .medicine-report-page table,
+  .mmrw-a4 table,
+  .mmrw-a4-page table {
+    width: 100% !important;
+    max-width: 100% !important;
+    table-layout: fixed !important;
+    border-collapse: collapse !important;
+  }
+  .medicine-report-page tr,
+  .mmrw-a4 tr,
+  .mmrw-a4-page tr {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+  .medicine-report-page img,
+  .medicine-report-page canvas,
+  .medicine-report-page svg,
+  .mmrw-a4 img,
+  .mmrw-a4 canvas,
+  .mmrw-a4 svg,
+  .mmrw-a4-page img,
+  .mmrw-a4-page canvas,
+  .mmrw-a4-page svg {
+    max-width: 100% !important;
+    max-height: 100% !important;
+    object-fit: contain !important;
+  }
+  .mmrw-preview-scroll {
+    overflow: auto !important;
+  }
+  .mmrw-pdf-busy {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: grid;
+    place-items: center;
+    background: rgba(16,45,49,.72);
+  }
+  .mmrw-pdf-busy > div {
+    width: min(420px, calc(100vw - 40px));
+    padding: 22px;
+    border-radius: 8px;
+    background: #fff;
+    color: #102d31;
+    text-align: center;
+    font-weight: 700;
+    box-shadow: 0 20px 55px rgba(0,0,0,.28);
+  }
+</style>
 <script>
 (function(){
   var REPORT_STEPS=10;
@@ -3267,8 +3368,445 @@ document.addEventListener('DOMContentLoaded',function(){
     if(!(window.session&&(session.role==='medicina'||session.role==='admin')))return;reportState();monthlyMedicineReportState.stepActual=1;renderMedicineMonthlyReportWizard(1);
   };
 })();
+<!-- correction-34: exact preview PDF, strict A4 flow and administrator users -->
+(function(){
+  'use strict';
+
+  function correction34Escape(value){
+    return String(value == null ? '' : value).replace(/[&<>"']/g,function(character){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character];
+    });
+  }
+  function correction34ReportState(){
+    return window.monthlyMedicineReportState || {};
+  }
+
+  var CORRECTION34_DEMO_USERS = [
+    {user:'medico',pass:'1234',name:'MD. JOSUE CHAMBA',role:'medicina',dep:'MEDICINA GENERAL',active:true},
+    {user:'enfermeria',pass:'1234',name:'LIC. ENFERMERIA UBU',role:'enfermeria',dep:'ENFERMERIA/FARMACIA',active:true},
+    {user:'lab',pass:'1234',name:'LABORATORIO CLINICO UBU',role:'laboratorio',dep:'LABORATORIO CLINICO',active:true},
+    {user:'laboratorio',pass:'1234',name:'LABORATORIO CLINICO UBU',role:'laboratorio',dep:'LABORATORIO CLINICO',active:true},
+    {user:'odonto',pass:'1234',name:'ODONTOLOGIA UBU',role:'odontologia',dep:'ODONTOLOGIA',active:true},
+    {user:'admin',pass:'admin123',name:'ADMINISTRADOR UBU',role:'admin',dep:'ADMINISTRACION',active:true},
+    {user:'admin',pass:'1234',name:'ADMINISTRADOR UBU',role:'admin',dep:'ADMINISTRACION',active:true}
+  ];
+
+  window.normalizeUserArea = function(value){
+    var normalized = String(value == null ? '' : value)
+      .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+      .trim().toLowerCase().replace(/\s+/g,' ');
+    if(!normalized) return '';
+    if(normalized.indexOf('admin') >= 0) return 'admin';
+    if(normalized.indexOf('odont') >= 0) return 'odontologia';
+    if(normalized.indexOf('labor') >= 0 || normalized === 'lab') return 'laboratorio';
+    if(normalized.indexOf('enfer') >= 0 || normalized.indexOf('farm') >= 0) return 'enfermeria';
+    if(normalized.indexOf('medic') >= 0) return 'medicina';
+    return normalized.replace(/[^a-z0-9]+/g,'');
+  };
+
+  window.normalizeAdminUserRecord = function(user){
+    user = user && typeof user === 'object' ? user : {};
+    var role = normalizeUserArea(user.role || user.area || user.dependencia || user.dep);
+    return Object.assign({}, user, {
+      user: String(user.user || user.usuario || user.login || '').trim(),
+      pass: String(user.pass != null ? user.pass : (user.clave != null ? user.clave : user.password || '')),
+      name: String(user.name || user.nombre || user.nombreCompleto || user.user || user.usuario || '').trim(),
+      role: role || 'medicina',
+      dep: String(user.dep || user.dependencia || user.area || role || '').trim(),
+      active: user.active !== false && user.activo !== false && String(user.estado || '').toLowerCase() !== 'inactivo'
+    });
+  };
+
+  window.getUsersForLogin = function(){
+    if(!db || typeof db !== 'object') db = {};
+    var source = [];
+    if(Array.isArray(db.users)) source = source.concat(db.users);
+    if(Array.isArray(db.usuarios)) source = source.concat(db.usuarios);
+    var byKey = {};
+    source.forEach(function(raw){
+      var user = normalizeAdminUserRecord(raw);
+      var key = user.user.toLowerCase() + '|' + user.role;
+      if(user.user && !byKey[key]) byKey[key] = user;
+    });
+    CORRECTION34_DEMO_USERS.forEach(function(raw){
+      var demo = normalizeAdminUserRecord(raw);
+      var key = demo.user.toLowerCase() + '|' + demo.role;
+      if(!byKey[key]) byKey[key] = demo;
+    });
+    return Object.keys(byKey).map(function(key){ return byKey[key]; });
+  };
+
+  function persistNormalizedUsers(users){
+    var existing = Array.isArray(db.users) ? db.users : [];
+    var customKeys = {};
+    existing.forEach(function(raw){
+      var user = normalizeAdminUserRecord(raw);
+      if(user.user) customKeys[user.user.toLowerCase()+'|'+user.role] = true;
+    });
+    db.users = users.filter(function(user){
+      return customKeys[user.user.toLowerCase()+'|'+user.role] ||
+        !CORRECTION34_DEMO_USERS.some(function(demo){
+          return demo.user.toLowerCase() === user.user.toLowerCase() &&
+            normalizeUserArea(demo.role) === user.role;
+        });
+    }).map(normalizeAdminUserRecord);
+    if(typeof save === 'function') save();
+    else if(typeof saveUBUDBSafe === 'function') saveUBUDBSafe();
+  }
+
+  async function refreshUsersBeforeLogin(){
+    if(typeof ubuCloudEnabled !== 'function' || !ubuCloudEnabled() || !window.ubuCloudRef) return;
+    try {
+      var snapshot = await window.ubuCloudRef.once('value');
+      var remote = snapshot && snapshot.val ? snapshot.val() : null;
+      if(remote && typeof remote === 'object') {
+        db = typeof ubuRepairDb === 'function' ? ubuRepairDb(remote) : remote;
+        if(typeof saveUBUDBSafe === 'function') saveUBUDBSafe();
+      }
+    } catch(error) {
+      console.warn('No se pudo actualizar usuarios antes del ingreso', error);
+    }
+  }
+
+  window.doLogin = async function(){
+    try {
+      await refreshUsersBeforeLogin();
+      if(typeof ubuRepairDb === 'function') db = ubuRepairDb(db);
+      var userInput = document.getElementById('loginUser');
+      var passInput = document.getElementById('loginPass');
+      var loginPanel = document.getElementById('login');
+      var appPanel = document.getElementById('app');
+      var areaNode = document.querySelector('.area.active') || document.querySelector('.area');
+      var selectedArea = normalizeUserArea(areaNode && areaNode.dataset ? areaNode.dataset.area : '');
+      var typedUser = String(userInput && userInput.value || '').trim().toLowerCase();
+      var typedPass = String(passInput && passInput.value || '');
+      var users = getUsersForLogin();
+      var user = users.find(function(item){
+        return item.user.toLowerCase() === typedUser &&
+          item.pass === typedPass &&
+          item.active !== false &&
+          (!selectedArea || item.role === selectedArea);
+      });
+      if(!user) {
+        var sameLogin = users.find(function(item){ return item.user.toLowerCase() === typedUser; });
+        var message = sameLogin && sameLogin.active === false
+          ? 'El usuario está inactivo. Solicite al administrador que lo active.'
+          : 'Usuario, clave o área incorrecta. Revise el área seleccionada.';
+        if(typeof alertApp === 'function') alertApp('Ingreso',message); else alert(message);
+        return false;
+      }
+      session = user;
+      if(loginPanel) loginPanel.classList.add('hidden');
+      if(appPanel) appPanel.classList.remove('hidden');
+      var nameNode=document.getElementById('userName'),roleNode=document.getElementById('userRole'),avatarNode=document.getElementById('avatar');
+      if(nameNode) nameNode.textContent=user.name||user.user;
+      if(roleNode) roleNode.textContent=user.dep||user.role;
+      if(avatarNode) avatarNode.textContent=String(user.name||user.user||'U').split(/\s+/).filter(Boolean).map(function(part){return part[0]}).slice(0,2).join('').toUpperCase();
+      if(typeof renderNav === 'function') renderNav();
+      var firstPage = window.rolePages && rolePages[user.role] ? rolePages[user.role][0] : ({medicina:'cola',enfermeria:'triaje',laboratorio:'laboratorio',odontologia:'odontologia',admin:'admin'}[user.role]||'cola');
+      if(typeof setPage === 'function') setPage(firstPage);
+      return false;
+    } catch(error) {
+      console.error('Error al ingresar',error);
+      var message='No se pudo ingresar al sistema: '+(error && error.message ? error.message : error);
+      if(typeof alertApp === 'function') alertApp('Error de ingreso',message); else alert(message);
+      return false;
+    }
+  };
+  try { doLogin = window.doLogin; } catch(_error) {}
+
+  window.editingAdminUserIndex = -1;
+  window.editAdminUser = function(index){
+    var user=(db.users||[])[index];if(!user)return;
+    window.editingAdminUserIndex=index;
+    [['uName',user.name],['uUser',user.user],['uPass',user.pass],['uRole',normalizeUserArea(user.role||user.dep)],['uDep',user.dep]].forEach(function(pair){
+      var element=document.getElementById(pair[0]);if(element)element.value=pair[1]||'';
+    });
+    var button=document.getElementById('adminUserSaveButton');if(button)button.textContent='Actualizar usuario';
+  };
+  window.cancelAdminUserEdit = function(){window.editingAdminUserIndex=-1;if(typeof page_usuarios==='function')page_usuarios()};
+  window.saveAdminUser = function(){
+    var name=String(document.getElementById('uName').value||'').trim();
+    var login=String(document.getElementById('uUser').value||'').trim();
+    var pass=String(document.getElementById('uPass').value||'');
+    var role=normalizeUserArea(document.getElementById('uRole').value);
+    var dep=String(document.getElementById('uDep').value||'').trim();
+    if(!name||!login||!pass||!role){alert('Complete nombre, usuario, clave y área.');return false}
+    var duplicate=(db.users||[]).findIndex(function(item,index){
+      return index!==window.editingAdminUserIndex &&
+        String(item.user||'').trim().toLowerCase()===login.toLowerCase() &&
+        item.active!==false;
+    });
+    if(duplicate>=0){alert('Ya existe un usuario activo con ese nombre de ingreso.');return false}
+    var record={name:name,user:login,pass:pass,role:role,dep:dep||role,active:true,profile:{cargo:dep||role}};
+    if(window.editingAdminUserIndex>=0) db.users[window.editingAdminUserIndex]=Object.assign({},db.users[window.editingAdminUserIndex],record);
+    else db.users.push(record);
+    window.editingAdminUserIndex=-1;
+    if(typeof ensureProfileConfig==='function')ensureProfileConfig();
+    if(typeof save==='function')save();
+    page_usuarios();
+    return true;
+  };
+  window.addUser=window.saveAdminUser;
+  window.toggleAdminUser=function(index){
+    if(!db.users||!db.users[index])return;
+    db.users[index].active=db.users[index].active===false;
+    if(typeof save==='function')save();
+    page_usuarios();
+  };
+  window.deleteAdminUser=function(index){
+    if(!db.users||!db.users[index])return;
+    if(!confirm('¿Desea desactivar este usuario? Ya no podrá iniciar sesión.'))return;
+    db.users[index].active=false;
+    if(typeof save==='function')save();
+    page_usuarios();
+  };
+  window.page_usuarios=function(){
+    if(typeof ensureProfileConfig==='function')ensureProfileConfig();
+    db.users=(db.users||[]).map(normalizeAdminUserRecord);
+    var editing=window.editingAdminUserIndex>=0,selected=editing?db.users[window.editingAdminUserIndex]:null;
+    content.innerHTML='<div class="grid g2"><div class="card"><div class="head"><div><h2>'+(editing?'Editar usuario':'Crear usuario')+'</h2><p class="sub">Asignar dependencia y área de acceso.</p></div><div style="display:flex;gap:8px"><button id="adminUserSaveButton" class="btn btn-primary" onclick="saveAdminUser()">'+(editing?'Actualizar usuario':'Guardar usuario')+'</button>'+(editing?'<button class="btn btn-gray" onclick="cancelAdminUserEdit()">Cancelar</button>':'')+'</div></div><div class="formgrid two">'+
+      inp('uName','Nombre completo',selected?selected.name:'')+
+      inp('uUser','Usuario',selected?selected.user:'')+
+      inp('uPass','Clave temporal',selected?selected.pass:'1234')+
+      sel('uRole','Área',['medicina','enfermeria','laboratorio','odontologia','admin'],selected?selected.role:'medicina')+
+      inp('uDep','Dependencia',selected?selected.dep:'')+
+      '</div></div><div class="card"><h2>Usuarios registrados</h2><br><table><tr><th>Nombre</th><th>Usuario</th><th>Área</th><th>Dependencia</th><th>Estado</th><th>Acción</th></tr>'+
+      db.users.map(function(user,index){return'<tr><td>'+correction34Escape(user.name)+'</td><td>'+correction34Escape(user.user)+'</td><td>'+correction34Escape(user.role)+'</td><td>'+correction34Escape(user.dep)+'</td><td><span class="status '+(user.active!==false?'ok':'crit')+'">'+(user.active!==false?'Activo':'Inactivo')+'</span></td><td style="display:flex;gap:5px;flex-wrap:wrap"><button class="btn btn-light" onclick="editAdminUser('+index+')">Editar</button><button class="btn btn-gray" onclick="toggleAdminUser('+index+')">'+(user.active!==false?'Inactivar':'Activar')+'</button><button class="btn btn-red" onclick="deleteAdminUser('+index+')">Desactivar</button></td></tr>'}).join('')+
+      '</table></div></div><br>'+(typeof profileConfigEditor==='function'?profileConfigEditor():'');
+  };
+
+  function waitForMedicineReportImages(root){
+    var images=Array.prototype.slice.call(root.querySelectorAll('img'));
+    return Promise.all(images.map(function(image){
+      if(image.complete) return Promise.resolve();
+      return new Promise(function(resolve){
+        image.addEventListener('load',resolve,{once:true});
+        image.addEventListener('error',resolve,{once:true});
+        setTimeout(resolve,4000);
+      });
+    }));
+  }
+
+  function showMedicinePdfProgress(){
+    var overlay=document.createElement('div');
+    overlay.className='mmrw-pdf-busy';
+    overlay.innerHTML='<div id="mmrwPdfProgress">Preparando el informe PDF...</div>';
+    document.body.appendChild(overlay);
+    return overlay;
+  }
+
+  window.downloadMedicineMonthlyReportPDF = async function(){
+    var overlay=null;
+    try {
+      if(typeof updateMedicineMonthlyReportPreview==='function')updateMedicineMonthlyReportPreview({preserveScroll:true,autoScrollToStep:false,reason:'pdf-export'});
+      var root=document.getElementById('mmrwPreviewPages');
+      if(!root)throw new Error('No se encontró la vista previa del informe.');
+      var pages=Array.prototype.slice.call(root.querySelectorAll('.medicine-report-page, .mmrw-a4, .mmrw-a4-page')).filter(function(page){
+        return page.offsetParent!==null;
+      });
+      if(!pages.length)throw new Error('No se encontraron páginas A4 para exportar.');
+      if(!window.html2canvas||!window.jspdf||!window.jspdf.jsPDF)throw new Error('No se pudieron cargar las herramientas de exportación PDF. Verifique la conexión a internet e inténtelo nuevamente.');
+      overlay=showMedicinePdfProgress();
+      await waitForMedicineReportImages(root);
+      if(document.fonts&&document.fonts.ready)await document.fonts.ready;
+      var jsPDF=window.jspdf.jsPDF;
+      var pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4',compress:true,putOnlyUsedFonts:true});
+      for(var index=0;index<pages.length;index++){
+        var progress=document.getElementById('mmrwPdfProgress');
+        if(progress)progress.textContent='Generando página '+(index+1)+' de '+pages.length+'...';
+        var page=pages[index];
+        var canvas=await window.html2canvas(page,{
+          scale:2,
+          useCORS:true,
+          allowTaint:false,
+          backgroundColor:'#ffffff',
+          logging:false,
+          scrollX:0,
+          scrollY:0,
+          windowWidth:Math.max(page.scrollWidth,page.offsetWidth),
+          windowHeight:Math.max(page.scrollHeight,page.offsetHeight),
+          imageTimeout:10000,
+          removeContainer:true
+        });
+        var imageData=canvas.toDataURL('image/jpeg',0.9);
+        if(index>0)pdf.addPage('a4','portrait');
+        pdf.addImage(imageData,'JPEG',0,0,210,297,undefined,'FAST');
+        canvas.width=1;canvas.height=1;
+        await new Promise(function(resolve){setTimeout(resolve,0)});
+      }
+      pdf.save(typeof medicineFinalReportFileName==='function'?medicineFinalReportFileName('pdf'):'INFORME_MENSUAL_MEDICINA.pdf');
+      if(typeof setStatus==='function')setStatus('Informe mensual descargado en PDF.');
+      return true;
+    } catch(error) {
+      console.error('No se pudo exportar el informe PDF',error);
+      alert('No se pudo generar el PDF: '+(error&&error.message?error.message:error));
+      return false;
+    } finally {
+      if(overlay&&overlay.parentNode)overlay.parentNode.removeChild(overlay);
+    }
+  };
+  window.exportMedicineMonthlyReportPDF=window.downloadMedicineMonthlyReportPDF;
+
+  window.downloadCertificatePdf = async function(){
+    var overlay=null,host=null;
+    try {
+      if(typeof registerDownloadedMedicalCertificate==='function')registerDownloadedMedicalCertificate();
+      var source=document.getElementById('certPrintable');
+      if(!source&&typeof certPreviewHtml==='function'){
+        host=document.createElement('div');
+        host.style.cssText='position:fixed;left:-10000px;top:0;width:794px;height:1123px;background:#fff;z-index:-1;overflow:hidden';
+        host.innerHTML=certPreviewHtml(certDataFromForm());
+        document.body.appendChild(host);
+        source=host.querySelector('#certPrintable');
+      }
+      if(!source)throw new Error('No se encontró el certificado renderizado.');
+      if(!window.html2canvas||!window.jspdf||!window.jspdf.jsPDF)throw new Error('No se pudieron cargar las herramientas de exportación PDF.');
+      overlay=showMedicinePdfProgress();
+      var progress=document.getElementById('mmrwPdfProgress');if(progress)progress.textContent='Generando certificado PDF...';
+      await waitForMedicineReportImages(source);
+      var previousTransform=source.style.transform,previousOrigin=source.style.transformOrigin;
+      source.style.transform='none';source.style.transformOrigin='top left';
+      var canvas=await window.html2canvas(source,{scale:2,useCORS:true,allowTaint:false,backgroundColor:'#ffffff',logging:false,scrollX:0,scrollY:0,windowWidth:source.scrollWidth,windowHeight:source.scrollHeight,imageTimeout:10000});
+      source.style.transform=previousTransform;source.style.transformOrigin=previousOrigin;
+      var pdf=new window.jspdf.jsPDF({orientation:'portrait',unit:'mm',format:'a4',compress:true});
+      pdf.addImage(canvas.toDataURL('image/jpeg',.92),'JPEG',0,0,210,297,undefined,'FAST');
+      pdf.save('CERTIFICADO_MEDICO_'+String((typeof today==='function'?today():new Date().toISOString().slice(0,10))).replace(/-/g,'_')+'.pdf');
+      canvas.width=1;canvas.height=1;
+      if(typeof notifyApp==='function')notifyApp('CERTIFICADO LISTO','El certificado se descargó en formato PDF.');
+      return true;
+    } catch(error) {
+      console.error('No se pudo exportar el certificado',error);
+      alert('No se pudo generar el certificado PDF: '+(error&&error.message?error.message:error));
+      return false;
+    } finally {
+      if(host&&host.parentNode)host.parentNode.removeChild(host);
+      if(overlay&&overlay.parentNode)overlay.parentNode.removeChild(overlay);
+    }
+  };
+
+  window.renderTableHeader=function(table){
+    var header=table&&table.querySelector?table.querySelector('thead'):null;
+    return header?header.cloneNode(true):null;
+  };
+  window.renderTableContinuationTitle=function(label){
+    var heading=document.createElement('h3');
+    heading.className='medicine-report-section-title';
+    heading.textContent=String(label||'Anexo')+' (continuación):';
+    return heading;
+  };
+  window.canFitTableRowInCurrentPage=function(page,row){
+    if(!page||!row)return false;
+    var clone=row.cloneNode(true),body=page.querySelector('table tbody');
+    if(!body)return false;
+    body.appendChild(clone);
+    var fits=page.scrollHeight<=page.clientHeight+1&&page.scrollWidth<=page.clientWidth+1;
+    clone.remove();
+    return fits;
+  };
+  window.appendTableRowsToReportPages=function(options){
+    options=options||{};
+    var rows=Array.prototype.slice.call(options.rows||[]),pages=[],pageFactory=options.createPage,tableFactory=options.createTable;
+    if(typeof pageFactory!=='function'||typeof tableFactory!=='function')return pages;
+    var page=pageFactory(0),table=tableFactory(0),body=table.querySelector('tbody');
+    page.appendChild(table);pages.push(page);
+    rows.forEach(function(row,index){
+      var candidate=row.cloneNode?row.cloneNode(true):row;
+      body.appendChild(candidate);
+      if(page.scrollHeight>page.clientHeight+1||page.scrollWidth>page.clientWidth+1){
+        candidate.remove();
+        page=pageFactory(pages.length);
+        if(options.continuationTitle)page.appendChild(renderTableContinuationTitle(options.continuationTitle));
+        table=tableFactory(pages.length);body=table.querySelector('tbody');page.appendChild(table);pages.push(page);body.appendChild(candidate);
+      }
+    });
+    return pages;
+  };
+  window.appendTextFragmentToPage=function(page,fragment,className){
+    if(!page)return false;
+    var paragraph=document.createElement('p');paragraph.className=className||'medicine-report-paragraph';paragraph.textContent=String(fragment||'');page.appendChild(paragraph);
+    if(page.scrollHeight>page.clientHeight+1||page.scrollWidth>page.clientWidth+1){paragraph.remove();return false}
+    return true;
+  };
+
+  window.renderMedicineMonthlyReportStep10=function(){renderMedicineMonthlyReportWizard(10)};
+  window.step10Html=function(){
+    var state=correction34ReportState(),d=state.datosGenerales||{},target=document.getElementById('mmrwPreviewPages');
+    var pageCount=target?target.querySelectorAll('.medicine-report-page,.mmrw-a4,.mmrw-a4-page').length:0;
+    return'<section class="mmrw-form-panel"><h3>Vista final del informe mensual</h3><p class="sub">Revise el documento completo antes de descargarlo.</p><div class="mmrw-editor-block"><h4>Resumen del informe</h4><p><strong>Periodo:</strong> '+correction34Escape(formatMedicineReportPeriod(d.fechaInicio,d.fechaFin))+'<br><strong>Responsable:</strong> '+correction34Escape(d.medicoResponsable||'NO REGISTRADO')+'</p></div><div class="mmrw-summary-grid"><div class="mmrw-summary-card"><small>Anexos generados</small><strong>7</strong></div><div class="mmrw-summary-card"><small>Páginas</small><strong>'+pageCount+'</strong></div></div><div class="mmrw-anexo4-toolbar"><button class="btn" type="button" onclick="updateMedicineMonthlyReportPreview({preserveScroll:true,autoScrollToStep:false});renderMedicineMonthlyReportStep10()">Actualizar vista final</button><button class="btn btn-primary" type="button" onclick="downloadMedicineMonthlyReportPDF()">Descargar PDF</button></div></section>';
+  };
+
+  var originalRenderWizard=window.renderMedicineMonthlyReportWizard;
+  window.renderMedicineMonthlyReportWizard=function(step,options){
+    var result=originalRenderWizard.call(this,step,options);
+    if(Number(step||correction34ReportState().stepActual)===10){
+      var panel=document.querySelector('.mmrw-form-panel');
+      if(panel)panel.outerHTML=window.step10Html();
+    }
+    return result;
+  };
+  window.renderMedicineMonthlyReportStep=window.renderMedicineMonthlyReportWizard;
+
+  function correction34MedicineAnexo7Table(rows,offset){
+    var body=(rows||[]).map(function(row,index){
+      return'<tr><td class="col-number">'+(offset+index+1)+'</td><td class="col-name">'+correction34Escape(row.nombre||'NO REGISTRADO')+'</td><td class="col-id">'+correction34Escape(row.cedula||'NO REGISTRADO')+'</td><td class="col-career">'+correction34Escape(row.carrera||'NO REGISTRADO')+'</td><td class="col-diagnosis">'+correction34Escape(row.diagnostico||'NO REGISTRADO')+'</td></tr>';
+    }).join('');
+    if(!body)body='<tr><td colspan="5">No se registraron informes ni certificados médicos legalizados durante el periodo seleccionado.</td></tr>';
+    return'<table class="medicine-anexo7-table"><thead><tr><th class="col-number">N°</th><th class="col-name">NOMBRE</th><th class="col-id">CÉDULA DE IDENTIDAD</th><th class="col-career">CARRERA</th><th class="col-diagnosis">DIAGNÓSTICO</th></tr></thead><tbody>'+body+'</tbody></table>';
+  }
+  window.paginateMedicineAnexo7Pages=function(rows){
+    rows=rows||[];
+    var chunks=[],size=12;
+    if(!rows.length)chunks=[[]];
+    else for(var i=0;i<rows.length;i+=size)chunks.push(rows.slice(i,i+size));
+    var state=correction34ReportState(),period=state.paso9&&state.paso9.anexo7?state.paso9.anexo7.periodoTexto:'';
+    return chunks.map(function(chunk,index){
+      return'<section class="medicine-anexo7"><h3 class="medicine-report-section-title">'+(index===0?'Anexo 7:':'Anexo 7 (continuación):')+'</h3>'+(index===0?'<p class="medicine-anexo7-title">5. Registro de informes y certificados médicos legalizados durante el periodo '+correction34Escape(period)+'.</p>':'')+correction34MedicineAnexo7Table(chunk,index*size)+'</section>';
+    });
+  };
+
+  window.compressMedicineImageFile=function(file,options){
+    options=Object.assign({maxWidth:1600,maxHeight:1600,quality:.82,outputType:'image/jpeg'},options||{});
+    return new Promise(function(resolve,reject){
+      if(!file)return reject(new Error('No se seleccionó una imagen.'));
+      var reader=new FileReader();
+      reader.onerror=function(){reject(new Error('No se pudo leer la imagen.'))};
+      reader.onload=function(){
+        var original=reader.result;
+        if(typeof Image==='undefined'){
+          resolve({id:'img_'+Date.now(),nombreArchivo:file.name||'imagen',name:file.name||'imagen',tipo:file.type||'',type:file.type||'',tamaño:Number(file.size)||0,dataUrl:original,fechaCarga:new Date().toISOString(),comprimida:false});
+          return;
+        }
+        var image=new Image();
+        image.onerror=function(){resolve({id:'img_'+Date.now(),nombreArchivo:file.name||'imagen',name:file.name||'imagen',tipo:file.type||'',type:file.type||'',tamaño:Number(file.size)||0,dataUrl:original,fechaCarga:new Date().toISOString(),comprimida:false})};
+        image.onload=function(){
+          try{
+            var ratio=Math.min(1,options.maxWidth/image.width,options.maxHeight/image.height);
+            var width=Math.max(1,Math.round(image.width*ratio)),height=Math.max(1,Math.round(image.height*ratio));
+            var canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;
+            var context=canvas.getContext('2d');context.fillStyle='#fff';context.fillRect(0,0,width,height);context.drawImage(image,0,0,width,height);
+            var dataUrl=canvas.toDataURL(options.outputType,options.quality);
+            resolve({id:'img_'+Date.now()+'_'+Math.random().toString(36).slice(2),nombreArchivo:String(file.name||'imagen').replace(/\.[^.]+$/,'.jpg'),name:file.name||'imagen',tipo:options.outputType,type:options.outputType,tamaño:Math.round(dataUrl.length*.75),dataUrl:dataUrl,fechaCarga:new Date().toISOString(),comprimida:true,ancho:width,alto:height});
+          }catch(error){resolve({id:'img_'+Date.now(),nombreArchivo:file.name||'imagen',name:file.name||'imagen',tipo:file.type||'',type:file.type||'',tamaño:Number(file.size)||0,dataUrl:original,fechaCarga:new Date().toISOString(),comprimida:false})}
+        };
+        image.src=original;
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+  window.compressMedicineImageDataUrl=window.compressMedicineImageFile;
+  window.readOrCompressMedicineImageFile=window.compressMedicineImageFile;
+
+  if(document&&typeof document.addEventListener==='function')document.addEventListener('DOMContentLoaded',function(){
+    var loginButton=Array.prototype.slice.call(document.querySelectorAll('button')).find(function(button){return/ingresar\s+al\s+sistema/i.test(button.textContent||'')});
+    if(loginButton)loginButton.onclick=window.doLogin;
+  });
+})();
+<!-- correction-34:end -->
 </script>
 <!-- ubu-monthly-report-step1-corrected:end -->
+
+
 
 </body>
 </html>
